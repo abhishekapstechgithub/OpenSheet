@@ -23,7 +23,7 @@ jobs:
   #  Windows — build → windeployqt → NSIS installer → GitHub Release
   # ════════════════════════════════════════════════════════════════════
   build-windows:
-    name: 🪟 Windows (Qt ${{ env.QT_VERSION }})
+    name: 🪟 Windows (Qt 6.8.1 MSVC2022)
     runs-on: windows-latest
 
     steps:
