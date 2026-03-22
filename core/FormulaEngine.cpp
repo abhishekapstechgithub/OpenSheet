@@ -144,7 +144,14 @@ FormulaEngine::FnMap FormulaEngine::buildFunctions(Sheet* sheet, int r0, int c0)
     F["MODE"]  = [](FnArgs a){ auto v=toDoubles(a); if(v.empty())return QVariant(); QHash<double,int>c; for(auto d:v)c[d]++; return QVariant(*std::max_element(v.begin(),v.end(),[&c](double x,double y){return c[x]<c[y];})); };
     F["LARGE"] = [](FnArgs a){ auto v=toDoubles(a); int k=(int)toD(a.last()); v.pop_back(); std::sort(v.begin(),v.end(),std::greater<double>()); return k>0&&k<=(int)v.size()?QVariant(v[k-1]):QVariant(); };
     F["SMALL"] = [](FnArgs a){ auto v=toDoubles(a); int k=(int)toD(a.last()); v.pop_back(); std::sort(v.begin(),v.end()); return k>0&&k<=(int)v.size()?QVariant(v[k-1]):QVariant(); };
-    F["RANK"]  = [](FnArgs a){ double val=toD(a[0]); auto v=a.mid(1); auto nums=toDoubles(v); bool asc=a.size()>2&&toD(a[2])!=0; std::sort(nums.begin(),nums.end(),asc?std::less<double>():std::greater<double>()); auto it=std::find(nums.begin(),nums.end(),val); return it!=nums.end()?QVariant((int)(it-nums.begin())+1):QVariant("#N/A"); };
+    F["RANK"]  = [](FnArgs a){
+        double val=toD(a[0]); auto v=a.mid(1); auto nums=toDoubles(v);
+        bool asc=a.size()>2&&toD(a[2])!=0;
+        if(asc) std::sort(nums.begin(),nums.end(),std::less<double>());
+        else    std::sort(nums.begin(),nums.end(),std::greater<double>());
+        auto it=std::find(nums.begin(),nums.end(),val);
+        return it!=nums.end()?QVariant((int)(it-nums.begin())+1):QVariant(QString("#N/A"));
+    };
 
     // ── Logical ──
     F["IF"]    = [](FnArgs a){ return a.size()<2?QVariant():a[0].toBool()?a[1]:(a.size()>2?a[2]:QVariant(false)); };

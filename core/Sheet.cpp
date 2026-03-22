@@ -133,8 +133,8 @@ void Sheet::sortRange(int r1,int c1,int r2,int c2,int keyCol,Qt::SortOrder order
     });
     for (int i=0;i<rows.size();i++) {
         for (int c=c1;c<=c2;c++) m_cells.remove(key(r1+i,c));
-        for (auto& [c,cell] : rows[i].cells.asKeyValueRange())
-            m_cells[key(r1+i,c)] = cell;
+        for (auto it2=rows[i].cells.constBegin(); it2!=rows[i].cells.constEnd(); ++it2)
+            m_cells[key(r1+i, it2.key())] = it2.value();
     }
     emit sheetChanged();
 }
