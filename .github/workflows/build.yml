@@ -64,20 +64,21 @@ jobs:
         with:
           arch: x64
 
-      # 5. Find Qt prefix and configure CMake
+      # 5. Configure CMake — QT_ROOT_DIR is set by jurplel/install-qt-action@v4
       - name: CMake configure
         shell: pwsh
         run: |
-          # jurplel/install-qt-action sets QTDIR or Qt6_DIR
-          $qtPrefix = $env:QTDIR
+          # Priority: QT_ROOT_DIR (set by install-qt-action v4) → QTDIR → Qt6_DIR → search
+          $qtPrefix = $env:QT_ROOT_DIR
+          if (-not $qtPrefix) { $qtPrefix = $env:QTDIR }
           if (-not $qtPrefix) { $qtPrefix = $env:Qt6_DIR }
           if (-not $qtPrefix) {
-            # Search the standard aqt output path
-            $cfg = Get-ChildItem "D:\a" -Recurse -Filter "Qt6Config.cmake" -ErrorAction SilentlyContinue | Select-Object -First 1
+            $cfg = Get-ChildItem "D:\a" -Recurse -Filter "Qt6Config.cmake" `
+                   -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($cfg) { $qtPrefix = $cfg.Directory.FullName }
           }
-          Write-Host "Qt prefix: $qtPrefix"
           if (-not $qtPrefix) { Write-Error "Qt not found!"; exit 1 }
+          Write-Host "Qt prefix: $qtPrefix"
 
           cmake -B build `
             -DCMAKE_BUILD_TYPE=Release `
@@ -118,8 +119,7 @@ jobs:
           New-Item -ItemType Directory -Force deploy | Out-Null
           Copy-Item "${{ steps.exe.outputs.path }}" deploy\
 
-          $wd = Get-ChildItem $env:QTDIR -Recurse -Filter windeployqt.exe -ErrorAction SilentlyContinue |
-                Select-Object -First 1
+          $wd = Get-Item "$env:QT_ROOT_DIR\bin\windeployqt.exe" -ErrorAction SilentlyContinue
           if (-not $wd) {
             $wd = Get-ChildItem "D:\a" -Recurse -Filter windeployqt.exe -ErrorAction SilentlyContinue |
                   Select-Object -First 1
