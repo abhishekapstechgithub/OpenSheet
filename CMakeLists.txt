@@ -8,23 +8,30 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-# Qt6 — all modules used anywhere in the project
+# ── Find Qt6 ──────────────────────────────────────────────────────────────
+# jurplel/install-qt-action sets QT_ROOT_DIR env var.
+# Pass it as CMAKE_PREFIX_PATH so find_package(Qt6) works correctly.
 find_package(Qt6 REQUIRED COMPONENTS
-    Core        # QObject, QString, QVariant, QHash, QVector, QJsonDocument …
-    Gui         # QColor, QFont, QBrush, QPainter, QPixmap, QIcon, QKeyEvent …
-    Widgets     # QMainWindow, QTableView, QToolButton, QDialog, QMenu …
+    Core         # QObject, QString, QVariant, QHash, QVector, QJsonDocument
+    Gui          # QColor, QFont, QBrush, QPainter, QPixmap, QIcon, QKeyEvent
+    Widgets      # QMainWindow, QTableView, QToolButton, QDialog, QMenu
     PrintSupport # QPrinter, QPrintDialog
 )
 
-# ── Platform-specific icon ─────────────────────────────────────────────────
+message(STATUS "Qt6 version  : ${Qt6_VERSION}")
+message(STATUS "Qt6Core dir  : ${Qt6Core_INCLUDE_DIRS}")
+message(STATUS "Qt6Gui  dir  : ${Qt6Gui_INCLUDE_DIRS}")
+
+# ── Platform-specific app icon ──────────────────────────────────────────────
 if(WIN32)
     set(APP_ICON_RC "${CMAKE_CURRENT_SOURCE_DIR}/resources/app.rc")
 endif()
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  OSCore — data model + formula engine (static lib)
-#  Uses: QObject/QString (Core) + QColor/QFont/QPainter (Gui)
-# ═══════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
+#  OSCore  — data model + formula engine  (static lib)
+#  Headers include: QColor QFont QBrush QPainter QPixmap (Qt6::Gui)
+#                   QObject QString QVariant QHash     (Qt6::Core)
+# ════════════════════════════════════════════════════════════════════════════
 add_library(OSCore STATIC
     core/Cell.cpp
     core/Sheet.cpp
@@ -33,18 +40,25 @@ add_library(OSCore STATIC
     core/CsvLoader.cpp
     core/UndoStack.cpp
 )
-target_include_directories(OSCore PUBLIC core)
-# PUBLIC so that anything linking OSCore also gets Qt6::Core + Qt6::Gui headers
+
+# Belt-and-suspenders: both target_link_libraries (INTERFACE propagation)
+# AND explicit target_include_directories (for MSVC generator quirks).
+target_include_directories(OSCore
+    PUBLIC
+        core
+        ${Qt6Core_INCLUDE_DIRS}
+        ${Qt6Gui_INCLUDE_DIRS}
+)
+
 target_link_libraries(OSCore
     PUBLIC
         Qt6::Core
-        Qt6::Gui       # QColor, QFont, QBrush, QPainter, QPixmap, QIcon live here
+        Qt6::Gui
 )
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  OSUI — ribbon + dialogs (static lib)
-#  Uses: Qt6::Widgets (all QWidget subclasses) and OSCore
-# ═══════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
+#  OSUI  — ribbon + all dialogs  (static lib)
+# ════════════════════════════════════════════════════════════════════════════
 add_library(OSUI STATIC
     ui/RibbonWidget.cpp
     ui/ColorButton.cpp
@@ -54,16 +68,22 @@ add_library(OSUI STATIC
     ui/CondFmtDialog.cpp
     ui/CellStyleDialog.cpp
 )
-target_include_directories(OSUI PUBLIC ui)
-target_link_libraries(OSUI
+
+target_include_directories(OSUI
     PUBLIC
-        Qt6::Widgets   # QToolButton, QDialog, QMenu, QComboBox, QTabBar …
-        OSCore         # brings Qt6::Core + Qt6::Gui transitively
+        ui
+        ${Qt6Widgets_INCLUDE_DIRS}
 )
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  OpenSheetET — main executable
-# ═══════════════════════════════════════════════════════════════════════════
+target_link_libraries(OSUI
+    PUBLIC
+        Qt6::Widgets
+        OSCore           # brings Qt6::Core + Qt6::Gui transitively
+)
+
+# ════════════════════════════════════════════════════════════════════════════
+#  OpenSheetET  — main executable
+# ════════════════════════════════════════════════════════════════════════════
 set(APP_SOURCES
     app/main.cpp
     app/MainWindow.cpp
@@ -81,7 +101,16 @@ else()
     add_executable(OpenSheetET ${APP_SOURCES})
 endif()
 
-target_include_directories(OpenSheetET PRIVATE app ui core)
+target_include_directories(OpenSheetET
+    PRIVATE
+        app
+        ui
+        core
+        ${Qt6Core_INCLUDE_DIRS}
+        ${Qt6Gui_INCLUDE_DIRS}
+        ${Qt6Widgets_INCLUDE_DIRS}
+)
+
 target_link_libraries(OpenSheetET
     PRIVATE
         OSCore
@@ -92,5 +121,5 @@ target_link_libraries(OpenSheetET
         Qt6::PrintSupport
 )
 
-# ── Install ────────────────────────────────────────────────────────────────
+# ── Install ──────────────────────────────────────────────────────────────────
 install(TARGETS OpenSheetET DESTINATION bin)

@@ -14,27 +14,26 @@ permissions:
   actions:  read
 
 env:
-  APP_NAME: OpenSheetET
-  # Qt 6.8.1 with msvc2022 — verified working arch string for aqt 3.3
+  APP_NAME:   OpenSheetET
   QT_VERSION: 6.8.1
   QT_ARCH:    win64_msvc2022_64
 
 jobs:
-  # ══════════════════════════════════════════════════════════════════
-  #  Windows — build + windeployqt + NSIS installer + GitHub Release
-  # ══════════════════════════════════════════════════════════════════
+  # ════════════════════════════════════════════════════════════════════
+  #  Windows — build → windeployqt → NSIS installer → GitHub Release
+  # ════════════════════════════════════════════════════════════════════
   build-windows:
-    name: 🪟 Windows
+    name: 🪟 Windows (Qt ${{ env.QT_VERSION }})
     runs-on: windows-latest
 
     steps:
-      # 1. Checkout
+      # ── 1. Checkout ──────────────────────────────────────────────────
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2. Detect version
-      - name: Detect version
+      # ── 2. Version ───────────────────────────────────────────────────
+      - name: Set version
         id: ver
         shell: bash
         run: |
@@ -46,7 +45,7 @@ jobs:
           echo "version=${VER}" >> $GITHUB_OUTPUT
           echo "Version: ${VER}"
 
-      # 3. Install Qt — jurplel/install-qt-action handles aqt correctly
+      # ── 3. Install Qt ─────────────────────────────────────────────────
       - name: Install Qt ${{ env.QT_VERSION }}
         uses: jurplel/install-qt-action@v4
         with:
@@ -58,38 +57,43 @@ jobs:
           cache:      true
           cache-key-prefix: qt-${{ env.QT_VERSION }}-${{ env.QT_ARCH }}
 
-      # 4. Setup MSVC 2022 x64
-      - name: Setup MSVC
+      # ── 4. MSVC 2022 x64 ─────────────────────────────────────────────
+      - name: Setup MSVC 2022
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      # 5. Configure CMake — QT_ROOT_DIR is set by jurplel/install-qt-action@v4
+      # ── 5. CMake configure ────────────────────────────────────────────
+      # jurplel/install-qt-action@v4 sets QT_ROOT_DIR to the Qt install dir,
+      # e.g. D:\a\OpenSheet\Qt\6.8.1\msvc2022_64
+      # Pass it directly as CMAKE_PREFIX_PATH so find_package(Qt6) succeeds.
       - name: CMake configure
         shell: pwsh
         run: |
-          # Priority: QT_ROOT_DIR (set by install-qt-action v4) → QTDIR → Qt6_DIR → search
-          $qtPrefix = $env:QT_ROOT_DIR
-          if (-not $qtPrefix) { $qtPrefix = $env:QTDIR }
-          if (-not $qtPrefix) { $qtPrefix = $env:Qt6_DIR }
-          if (-not $qtPrefix) {
-            $cfg = Get-ChildItem "D:\a" -Recurse -Filter "Qt6Config.cmake" `
-                   -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($cfg) { $qtPrefix = $cfg.Directory.FullName }
+          $qt = $env:QT_ROOT_DIR
+          Write-Host "QT_ROOT_DIR = $qt"
+          if (-not $qt -or -not (Test-Path $qt)) {
+            Write-Error "QT_ROOT_DIR not set or path doesn't exist: '$qt'"
+            exit 1
           }
-          if (-not $qtPrefix) { Write-Error "Qt not found!"; exit 1 }
-          Write-Host "Qt prefix: $qtPrefix"
-
+          # Verify Qt6Config.cmake is reachable
+          $cfg = "$qt\lib\cmake\Qt6\Qt6Config.cmake"
+          if (Test-Path $cfg) {
+            Write-Host "Qt6Config.cmake found: $cfg"
+          } else {
+            Write-Warning "Qt6Config.cmake not at expected path — CMake will search"
+          }
           cmake -B build `
             -DCMAKE_BUILD_TYPE=Release `
-            "-DCMAKE_PREFIX_PATH=$qtPrefix" `
-            -G "Visual Studio 17 2022" -A x64
+            "-DCMAKE_PREFIX_PATH=$qt" `
+            -G "Visual Studio 17 2022" `
+            -A x64
 
-      # 6. Build
+      # ── 6. Build ──────────────────────────────────────────────────────
       - name: Build
         run: cmake --build build --config Release --parallel 4
 
-      # 7. Find .exe (handles different output directory layouts)
+      # ── 7. Find .exe ──────────────────────────────────────────────────
       - name: Find executable
         id: exe
         shell: pwsh
@@ -99,76 +103,86 @@ jobs:
             "build\${{ env.APP_NAME }}.exe",
             "build\app\Release\${{ env.APP_NAME }}.exe"
           )
-          $found = $null
-          foreach ($c in $candidates) { if (Test-Path $c) { $found = $c; break } }
-          if (-not $found) {
-            $found = (Get-ChildItem -Recurse -Filter "${{ env.APP_NAME }}.exe" -ErrorAction SilentlyContinue | Select-Object -First 1)?.FullName
+          $path = $null
+          foreach ($c in $candidates) {
+            if (Test-Path $c) { $path = $c; break }
           }
-          if (-not $found) {
+          if (-not $path) {
+            Write-Host "Searching recursively..."
+            $path = (Get-ChildItem -Recurse -Filter "${{ env.APP_NAME }}.exe" `
+                      -ErrorAction SilentlyContinue | Select-Object -First 1)?.FullName
+          }
+          if (-not $path) {
             Write-Error "Executable not found. Build output:"
             Get-ChildItem -Recurse -Filter "*.exe" | Select-Object FullName
             exit 1
           }
-          Write-Host "EXE: $found"
-          echo "path=$found" >> $env:GITHUB_OUTPUT
+          Write-Host "EXE: $path"
+          echo "path=$path" >> $env:GITHUB_OUTPUT
 
-      # 8. windeployqt — bundle Qt DLLs
-      - name: Run windeployqt
+      # ── 8. windeployqt ────────────────────────────────────────────────
+      - name: Deploy Qt runtime
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force deploy | Out-Null
           Copy-Item "${{ steps.exe.outputs.path }}" deploy\
 
-          $wd = Get-Item "$env:QT_ROOT_DIR\bin\windeployqt.exe" -ErrorAction SilentlyContinue
-          if (-not $wd) {
-            $wd = Get-ChildItem "D:\a" -Recurse -Filter windeployqt.exe -ErrorAction SilentlyContinue |
-                  Select-Object -First 1
+          # windeployqt lives in QT_ROOT_DIR\bin\
+          $wd = "$env:QT_ROOT_DIR\bin\windeployqt.exe"
+          if (-not (Test-Path $wd)) {
+            # Fallback search
+            $wd = (Get-ChildItem -Path $env:QT_ROOT_DIR -Filter windeployqt.exe `
+                    -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1)?.FullName
           }
           if (-not $wd) { Write-Error "windeployqt not found"; exit 1 }
-          Write-Host "windeployqt: $($wd.FullName)"
+          Write-Host "windeployqt: $wd"
 
-          & $wd.FullName `
-            --dir deploy --release `
-            --no-translations --no-system-d3d-compiler --no-opengl-sw `
+          & $wd `
+            --dir deploy `
+            --release `
+            --no-translations `
+            --no-system-d3d-compiler `
+            --no-opengl-sw `
             "deploy\${{ env.APP_NAME }}.exe"
 
-          Write-Host "Deploy dir:"
-          Get-ChildItem deploy | Format-Table -AutoSize
+          Write-Host "`nDeploy contents:"
+          Get-ChildItem deploy | Format-Table Name, Length -AutoSize
 
-      # 9. Portable ZIP
+      # ── 9. Portable ZIP ───────────────────────────────────────────────
       - name: Create portable ZIP
         id: zip
         shell: pwsh
         run: |
           $name = "${{ env.APP_NAME }}-${{ steps.ver.outputs.version }}-Windows-Portable.zip"
           Compress-Archive -Path "deploy\*" -DestinationPath $name -CompressionLevel Optimal
-          Write-Host "ZIP: $name ($([math]::round((Get-Item $name).length/1MB,1)) MB)"
+          $mb = [math]::round((Get-Item $name).length / 1MB, 1)
+          Write-Host "ZIP: $name ($mb MB)"
           echo "name=$name" >> $env:GITHUB_OUTPUT
 
-      # 10. Install NSIS
+      # ── 10. Install NSIS ──────────────────────────────────────────────
       - name: Install NSIS
         shell: pwsh
         run: |
           choco install nsis --no-progress -y | Out-Null
-          $nsisPath = "C:\Program Files (x86)\NSIS"
-          if (Test-Path $nsisPath) {
-            echo "$nsisPath" >> $env:GITHUB_PATH
-            Write-Host "NSIS installed OK"
+          $p = "C:\Program Files (x86)\NSIS"
+          if (Test-Path $p) {
+            echo "$p" >> $env:GITHUB_PATH
+            Write-Host "NSIS ready"
           }
 
-      # 11. Patch version in NSI script
-      - name: Patch NSI version
+      # ── 11. Patch NSI version ─────────────────────────────────────────
+      - name: Patch installer version
         shell: pwsh
         run: |
-          $v   = "${{ steps.ver.outputs.version }}"
+          $v = "${{ steps.ver.outputs.version }}"
           $nsi = Get-Content installer\OpenSheetET.nsi -Raw
           $nsi = $nsi -replace '(!define APP_VERSION\s+")[^"]*"', "`${1}${v}`""
           $nsi = $nsi -replace '(OutFile\s+")[^"]*"',
                       "`${1}..\${{ env.APP_NAME }}-${v}-Setup.exe`""
           Set-Content installer\OpenSheetET.nsi $nsi -Encoding UTF8
-          Write-Host "Patched: version=$v"
+          Write-Host "Patched: version = $v"
 
-      # 12. Build NSIS installer
+      # ── 12. Build NSIS installer ──────────────────────────────────────
       - name: Build installer
         id: nsis
         shell: pwsh
@@ -186,14 +200,15 @@ jobs:
           Pop-Location
 
           if ($rc -eq 0 -and (Test-Path $setup)) {
-            Write-Host "Installer: $setup ($([math]::round((Get-Item $setup).length/1MB,1)) MB)"
+            $mb = [math]::round((Get-Item $setup).length / 1MB, 1)
+            Write-Host "Installer: $setup ($mb MB)"
             echo "name=$setup" >> $env:GITHUB_OUTPUT
           } else {
-            Write-Warning "NSIS failed (rc=$rc) — no installer artifact"
+            Write-Warning "NSIS failed (exit $rc)"
             echo "name=" >> $env:GITHUB_OUTPUT
           }
 
-      # 13. Upload portable ZIP artifact
+      # ── 13. Upload artifacts ──────────────────────────────────────────
       - name: Upload portable ZIP
         uses: actions/upload-artifact@v4
         with:
@@ -201,7 +216,6 @@ jobs:
           path: ${{ steps.zip.outputs.name }}
           retention-days: 30
 
-      # 14. Upload installer artifact
       - name: Upload installer
         if: steps.nsis.outputs.name != ''
         uses: actions/upload-artifact@v4
@@ -210,7 +224,7 @@ jobs:
           path: ${{ steps.nsis.outputs.name }}
           retention-days: 30
 
-      # 15. GitHub Release on version tags
+      # ── 14. GitHub Release on version tags ───────────────────────────
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -224,21 +238,21 @@ jobs:
             ### Downloads
             | File | Description |
             |------|-------------|
-            | `*-Setup.exe` | Windows Installer (recommended) |
-            | `*-Portable.zip` | Portable — no install needed |
+            | `*-Setup.exe` | Windows Installer — includes Start Menu + file association |
+            | `*-Portable.zip` | Portable — extract and run, no install needed |
 
             **Requirements:** Windows 10/11 x64
 
-            Built from commit `${{ github.sha }}`
+            Built from `${{ github.sha }}`
           files: |
             ${{ steps.nsis.outputs.name }}
             ${{ steps.zip.outputs.name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ══════════════════════════════════════════════════════════════════
+  # ════════════════════════════════════════════════════════════════════
   #  Linux Build
-  # ══════════════════════════════════════════════════════════════════
+  # ════════════════════════════════════════════════════════════════════
   build-linux:
     name: 🐧 Linux (Ubuntu 22.04)
     runs-on: ubuntu-22.04
